@@ -28,6 +28,8 @@ export default function RootLayout() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="(auth)" options={{ headerShown: false }} />
               <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+              <Stack.Screen name="scan" options={{ headerShown: false, presentation: "fullScreenModal" }} />
+              <Stack.Screen name="assistant" options={{ headerShown: false, presentation: "modal", animation: "slide_from_bottom" }} />
             </Stack>
           </AuthProvider>
         </QueryClientProvider>
