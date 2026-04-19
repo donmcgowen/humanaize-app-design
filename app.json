@@ -29,16 +29,40 @@
         "backgroundColor": "#0f172a"
       },
       "package": "life.humanaize.app",
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "ACTIVITY_RECOGNITION"]
+      "versionCode": 1,
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "ACTIVITY_RECOGNITION", "INTERNET", "ACCESS_NETWORK_STATE"]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "HumanAIze uses your camera to scan food barcodes and nutrition labels."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HumanAIze accesses your photos to add progress photos.",
+          "cameraPermission": "HumanAIze uses your camera to take progress photos."
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
     }
   }
 }
