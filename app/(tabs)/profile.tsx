@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   Modal, TextInput, Alert, ActivityIndicator, RefreshControl,
@@ -81,7 +81,7 @@ export default function ProfileScreen() {
     setLoading(false);
   }
 
-  useState(() => { loadProfile(); });
+  useEffect(() => { loadProfile(); }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -132,6 +132,7 @@ export default function ProfileScreen() {
           try {
             await apiLogout();
           } catch {}
+          await AsyncStorage.removeItem("humanaize_session");
           await AsyncStorage.removeItem("humanaize_user");
           setUser(null);
           router.replace("/(auth)/login");

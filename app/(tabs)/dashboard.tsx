@@ -114,10 +114,10 @@ export default function DashboardScreen() {
   const totalCarbs = entries.reduce((s: number, e: any) => s + (e.carbs ?? 0), 0);
   const totalFat = entries.reduce((s: number, e: any) => s + (e.fat ?? 0), 0);
 
-  const targetCals = profile?.dailyCalorieTarget ?? 2000;
-  const targetProtein = profile?.proteinTarget ?? 150;
-  const targetCarbs = profile?.carbTarget ?? 200;
-  const targetFat = profile?.fatTarget ?? 65;
+  const targetCals = profile?.dailyCalorieTarget ?? 0;
+  const targetProtein = profile?.proteinTarget ?? 0;
+  const targetCarbs = profile?.carbTarget ?? 0;
+  const targetFat = profile?.fatTarget ?? 0;
 
   const meals = ["Breakfast", "Lunch", "Dinner", "Snacks"];
   function getMealData(meal: string) {

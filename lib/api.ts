@@ -98,6 +98,24 @@ export async function apiLogMeasurement(data: object) {
   return trpcMutation("monitoring.logMeasurement", data);
 }
 
+// ── Food Scanning ───────────────────────────────────────────────────────────
+export async function apiScanBarcode(barcode: string) {
+  return trpcQuery("food.searchWithAI", { query: barcode, isBarcode: true });
+}
+
+export async function apiCalculateMacros(data: {
+  foodName: string;
+  amount: number;
+  unit: string;
+  caloriesPer100g: number;
+  proteinPer100g: number;
+  carbsPer100g: number;
+  fatPer100g: number;
+  servingWeightG?: number;
+}) {
+  return trpcMutation("food.calculateServingMacros", data);
+}
+
 // ── AI ────────────────────────────────────────────────────────────────────────
 export async function apiAskAssistant(message: string, context?: string) {
   return trpcMutation("ai.askAssistant", { message, context });
