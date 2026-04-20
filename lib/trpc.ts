@@ -4,7 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // The backend URL — same API as the web app
-const API_URL = "https://humanaize.life";
+const API_URL = "https://humanaize.life/api";
 const TOKEN_KEY = "humanaize_token";
 
 // Create the tRPC React hooks

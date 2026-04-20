@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const SESSION_KEY = "humanaize_session";
 const TOKEN_KEY = "humanaize_token";
-const API_URL = "https://humanaize.life";
+const API_URL = "https://humanaize.life/api";
 
 export interface User {
   id: number;
