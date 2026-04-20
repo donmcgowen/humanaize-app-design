@@ -10,7 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "../../constants/colors";
 import {
   apiGetFoodLog, apiAddFoodEntry, apiDeleteFoodEntry,
-  apiSearchFood, apiScanBarcode, apiAIScanFood,
+  apiSearchFood, apiScanBarcode, apiAIScanFood, apiCalculateMacros,
 } from "../../lib/api";
 
 const MEALS = ["Breakfast", "Lunch", "Dinner", "Snacks"];
@@ -32,11 +32,18 @@ interface FoodEntry {
 interface FoodResult {
   name: string;
   brand?: string;
+  // Display macros (for the selected serving amount)
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
   servingSize?: string;
+  // Per-100g values from server (used for accurate scaling by amount/unit)
+  caloriesPer100g?: number;
+  proteinPer100g?: number;
+  carbsPer100g?: number;
+  fatPer100g?: number;
+  servingWeightPerUnit?: number; // gram weight of 1 scoop/serving
 }
 
 // AI scan returns items array + totals
@@ -106,6 +113,9 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
   const [amount, setAmount] = useState("1");
   const [unit, setUnit] = useState("serving");
   const [adding, setAdding] = useState(false);
+  // Live macro preview (recalculated when amount/unit changes)
+  const [previewMacros, setPreviewMacros] = useState<{ calories: number; protein: number; carbs: number; fat: number } | null>(null);
+  const previewDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Camera (shared by barcode + AI scan)
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
@@ -131,6 +141,7 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     setSelectedFood(null);
     setAmount("1");
     setUnit("serving");
+    setPreviewMacros(null);
     setScanned(false);
     setScanLoading(false);
     setAiCapturing(false);
@@ -144,6 +155,57 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     setManualFat("");
   }
 
+  // Live macro preview: recalculate when amount, unit, or selectedFood changes
+  useEffect(() => {
+    if (!selectedFood) { setPreviewMacros(null); return; }
+    const parsedAmt = parseFloat(amount);
+    if (!parsedAmt || parsedAmt <= 0) { setPreviewMacros(null); return; }
+
+    if (previewDebounceRef.current) clearTimeout(previewDebounceRef.current);
+    previewDebounceRef.current = setTimeout(async () => {
+      if (
+        selectedFood.caloriesPer100g !== undefined &&
+        selectedFood.proteinPer100g  !== undefined &&
+        selectedFood.carbsPer100g    !== undefined &&
+        selectedFood.fatPer100g      !== undefined
+      ) {
+        try {
+          const calc = await apiCalculateMacros({
+            foodName:        selectedFood.name,
+            amount:          parsedAmt,
+            unit,
+            caloriesPer100g: selectedFood.caloriesPer100g,
+            proteinPer100g:  selectedFood.proteinPer100g,
+            carbsPer100g:    selectedFood.carbsPer100g,
+            fatPer100g:      selectedFood.fatPer100g,
+            servingWeightG:  selectedFood.servingWeightPerUnit,
+          });
+          setPreviewMacros({
+            calories: calc.calories ?? 0,
+            protein:  calc.protein  ?? 0,
+            carbs:    calc.carbs    ?? 0,
+            fat:      calc.fat      ?? 0,
+          });
+        } catch {
+          // Fallback: simple scaling from display macros
+          setPreviewMacros({
+            calories: Math.round(selectedFood.calories * parsedAmt),
+            protein:  Math.round(selectedFood.protein  * parsedAmt * 10) / 10,
+            carbs:    Math.round(selectedFood.carbs    * parsedAmt * 10) / 10,
+            fat:      Math.round(selectedFood.fat      * parsedAmt * 10) / 10,
+          });
+        }
+      } else {
+        setPreviewMacros({
+          calories: Math.round(selectedFood.calories * parsedAmt),
+          protein:  Math.round(selectedFood.protein  * parsedAmt * 10) / 10,
+          carbs:    Math.round(selectedFood.carbs    * parsedAmt * 10) / 10,
+          fat:      Math.round(selectedFood.fat      * parsedAmt * 10) / 10,
+        });
+      }
+    }, 400); // debounce 400ms
+  }, [selectedFood, amount, unit]);
+
   function handleClose() {
     reset();
     onClose();
@@ -155,8 +217,32 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     setSearching(true);
     setSearchResults([]);
     try {
-      const results = await apiSearchFood(searchQuery.trim());
-      setSearchResults(Array.isArray(results) ? results : []);
+      const raw = await apiSearchFood(searchQuery.trim());
+      const results: FoodResult[] = (Array.isArray(raw) ? raw : []).map((r: any) => {
+        // Server returns per-100g values. Calculate display macros for 1 standard serving.
+        const cal100  = Number(r.caloriesPer100g  ?? r.calories  ?? 0);
+        const pro100  = Number(r.proteinPer100g   ?? r.protein   ?? 0);
+        const carb100 = Number(r.carbsPer100g     ?? r.carbs     ?? 0);
+        const fat100  = Number(r.fatPer100g       ?? r.fat       ?? 0);
+        // Determine serving weight in grams (default 100g if unknown)
+        const servingWeightG = Number(r.servingWeightPerUnit ?? 0);
+        const multiplier = servingWeightG > 0 ? servingWeightG / 100 : 1;
+        return {
+          name: r.name ?? r.foodName ?? "Unknown",
+          brand: r.brand ?? r.description ?? undefined,
+          calories: Math.round(cal100 * multiplier),
+          protein:  Math.round(pro100 * multiplier * 10) / 10,
+          carbs:    Math.round(carb100 * multiplier * 10) / 10,
+          fat:      Math.round(fat100 * multiplier * 10) / 10,
+          servingSize: r.servingSize,
+          caloriesPer100g:  cal100,
+          proteinPer100g:   pro100,
+          carbsPer100g:     carb100,
+          fatPer100g:       fat100,
+          servingWeightPerUnit: servingWeightG > 0 ? servingWeightG : undefined,
+        };
+      });
+      setSearchResults(results);
     } catch {
       Alert.alert("Search Error", "Could not search foods. Try again.");
     }
@@ -262,20 +348,64 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     }
     setAdding(false);
   }
-
-  // ── Add single food ─────────────────────────────────────────────────────────
+  // ── Add single food ───────────────────────────────────────────────────────────
   async function handleAddFood(food: FoodResult) {
     setAdding(true);
     try {
-      const multiplier = parseFloat(amount) || 1;
+      const parsedAmount = parseFloat(amount) || 1;
+      let calories = food.calories;
+      let protein  = food.protein;
+      let carbs    = food.carbs;
+      let fat      = food.fat;
+
+      // If we have per-100g data, use the server's calculateServingMacros for accuracy.
+      // This correctly handles unit conversions (g, oz, scoop, cup, etc.) and serving weights.
+      if (
+        food.caloriesPer100g !== undefined &&
+        food.proteinPer100g  !== undefined &&
+        food.carbsPer100g    !== undefined &&
+        food.fatPer100g      !== undefined
+      ) {
+        try {
+          const calc = await apiCalculateMacros({
+            foodName:        food.name,
+            amount:          parsedAmount,
+            unit:            unit,
+            caloriesPer100g: food.caloriesPer100g,
+            proteinPer100g:  food.proteinPer100g,
+            carbsPer100g:    food.carbsPer100g,
+            fatPer100g:      food.fatPer100g,
+            servingWeightG:  food.servingWeightPerUnit,
+          });
+          calories = calc.calories  ?? calories;
+          protein  = calc.protein   ?? protein;
+          carbs    = calc.carbs     ?? carbs;
+          fat      = calc.fat       ?? fat;
+        } catch {
+          // If macro calc fails, fall back to simple proportion scaling
+          const ratio = parsedAmount;
+          calories = Math.round(food.calories * ratio);
+          protein  = Math.round(food.protein  * ratio * 10) / 10;
+          carbs    = Math.round(food.carbs    * ratio * 10) / 10;
+          fat      = Math.round(food.fat      * ratio * 10) / 10;
+        }
+      } else {
+        // No per-100g data (barcode, manual, AI scan) — simple proportion scaling
+        const ratio = parsedAmount;
+        calories = Math.round(food.calories * ratio);
+        protein  = Math.round(food.protein  * ratio * 10) / 10;
+        carbs    = Math.round(food.carbs    * ratio * 10) / 10;
+        fat      = Math.round(food.fat      * ratio * 10) / 10;
+      }
+
       await apiAddFoodEntry({
         name: food.name,
-        calories: Math.round(food.calories * multiplier),
-        protein: Math.round(food.protein * multiplier),
-        carbs: Math.round(food.carbs * multiplier),
-        fat: Math.round(food.fat * multiplier),
+        calories: Math.max(1, Math.round(calories)),
+        protein:  Math.max(0, protein),
+        carbs:    Math.max(0, carbs),
+        fat:      Math.max(0, fat),
         meal,
-        amount: multiplier,
+        amount:   parsedAmount,
         unit,
         date,
       });
@@ -286,7 +416,6 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     }
     setAdding(false);
   }
-
   // ── Manual ──────────────────────────────────────────────────────────────────
   async function handleManualAdd() {
     if (!manualName.trim() || !manualCals.trim()) {
@@ -302,18 +431,20 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     });
   }
 
-  // ── Confirm card ────────────────────────────────────────────────────────────
+  // ── Confirm card ──────────────────────────────────────────────────────────────────
   function renderConfirmCard(food: FoodResult) {
+    // Use live-calculated preview macros; fall back to food's display macros while calculating
+    const display = previewMacros ?? { calories: food.calories, protein: food.protein, carbs: food.carbs, fat: food.fat };
     return (
       <ScrollView style={{ flex: 1, padding: 16 }} keyboardShouldPersistTaps="handled">
         <View style={styles.selectedCard}>
           <Text style={styles.selectedName}>{food.name}</Text>
           {food.brand ? <Text style={styles.selectedBrand}>{food.brand}</Text> : null}
           <View style={styles.selectedMacros}>
-            <MacroChip label="kcal" value={food.calories} color={Colors.primary} />
-            <MacroChip label="Protein" value={food.protein} color={Colors.protein} />
-            <MacroChip label="Carbs" value={food.carbs} color={Colors.carbs} />
-            <MacroChip label="Fat" value={food.fat} color={Colors.fat} />
+            <MacroChip label="kcal" value={display.calories} color={Colors.primary} />
+            <MacroChip label="Protein" value={display.protein} color={Colors.protein} />
+            <MacroChip label="Carbs" value={display.carbs} color={Colors.carbs} />
+            <MacroChip label="Fat" value={display.fat} color={Colors.fat} />
           </View>
         </View>
         <Text style={styles.fieldLabel}>Amount</Text>

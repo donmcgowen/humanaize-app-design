@@ -128,7 +128,8 @@ export async function apiCalculateMacros(data: {
   fatPer100g: number;
   servingWeightG?: number;
 }) {
-  return trpcMutation("food.calculateServingMacros", data);
+  // calculateServingMacros is a tRPC query (GET), not a mutation
+  return trpcQuery("food.calculateServingMacros", data);
 }
 
 // ── AI ────────────────────────────────────────────────────────────────────────
