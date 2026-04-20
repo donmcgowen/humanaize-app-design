@@ -114,8 +114,8 @@ export async function apiScanBarcode(barcode: string) {
   return trpcQuery("food.lookupBarcode", { barcode });
 }
 
-export async function apiAIScanFood(imageBase64: string) {
-  return trpcMutation("food.aiScanFood", { imageBase64 });
+export async function apiAIScanFood(imageBase64: string, scanMode: "product" | "meal" = "product") {
+  return trpcMutation("food.analyzeMealPhoto", { imageBase64, mimeType: "image/jpeg", scanMode });
 }
 
 export async function apiCalculateMacros(data: {
