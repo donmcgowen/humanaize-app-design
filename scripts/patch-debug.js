@@ -3,52 +3,56 @@
  *
  * Fixes: "Cannot find module .../debug/src/index.js"
  *
- * Root cause: @react-native/dev-middleware depends on debug@2.6.9 which has
- * `"main": "./src/index.js"` but the package ships WITHOUT a src/ directory.
- * Node 24 (and sometimes Node 22) strict module resolution fails on this.
+ * Root cause: @react-native/dev-middleware@0.79.6 has "debug": "^2.2.0" in its
+ * own dependencies. On some npm versions, this causes debug@2.6.9 to be installed
+ * as a nested package. debug@2.6.9 has main: "./src/index.js" but ships without
+ * a src/ directory, causing Node 24 to fail.
  *
- * Fix: Rewrite the nested debug package.json to point main at ./node.js
- * which DOES exist in the package root.
+ * Fix: Patch @react-native/dev-middleware/package.json to require debug@^4.3.4
+ * so npm never installs the broken version.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const debugPkgPath = path.join(
-  __dirname,
-  '..',
-  'node_modules',
-  '@react-native',
-  'dev-middleware',
-  'node_modules',
-  'debug',
-  'package.json'
+// Fix 1: Patch @react-native/dev-middleware to require debug ^4
+const devMiddlewarePkgPath = path.join(
+  __dirname, '..', 'node_modules', '@react-native', 'dev-middleware', 'package.json'
 );
 
-if (!fs.existsSync(debugPkgPath)) {
-  console.log('[patch-debug] No nested debug package found — nothing to patch.');
-  process.exit(0);
+if (fs.existsSync(devMiddlewarePkgPath)) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(devMiddlewarePkgPath, 'utf8'));
+    if (pkg.dependencies && pkg.dependencies.debug && pkg.dependencies.debug.startsWith('^2')) {
+      pkg.dependencies.debug = '^4.3.4';
+      fs.writeFileSync(devMiddlewarePkgPath, JSON.stringify(pkg, null, 2) + '\n');
+      console.log('[patch-debug] Patched @react-native/dev-middleware: debug ^2.x -> ^4.3.4');
+    }
+  } catch (err) {
+    console.warn('[patch-debug] Could not patch dev-middleware:', err.message);
+  }
 }
 
-try {
-  const pkg = JSON.parse(fs.readFileSync(debugPkgPath, 'utf8'));
-  const version = pkg.version || 'unknown';
+// Fix 2: If nested debug@2.x is already installed, patch its package.json main field
+const debugPkgPath = path.join(
+  __dirname, '..', 'node_modules', '@react-native', 'dev-middleware',
+  'node_modules', 'debug', 'package.json'
+);
 
-  if (pkg.main === './src/index.js') {
-    // Check if src/index.js actually exists
-    const srcIndex = path.join(path.dirname(debugPkgPath), 'src', 'index.js');
-    if (!fs.existsSync(srcIndex)) {
-      // Point to node.js which exists at the package root
-      pkg.main = './node.js';
-      fs.writeFileSync(debugPkgPath, JSON.stringify(pkg, null, 2) + '\n');
-      console.log(`[patch-debug] Patched debug@${version}: main changed from ./src/index.js to ./node.js`);
-    } else {
-      console.log(`[patch-debug] debug@${version} src/index.js exists — no patch needed.`);
+if (fs.existsSync(debugPkgPath)) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(debugPkgPath, 'utf8'));
+    if (pkg.main === './src/index.js') {
+      const srcIndex = path.join(path.dirname(debugPkgPath), 'src', 'index.js');
+      if (!fs.existsSync(srcIndex)) {
+        pkg.main = './node.js';
+        fs.writeFileSync(debugPkgPath, JSON.stringify(pkg, null, 2) + '\n');
+        console.log('[patch-debug] Patched nested debug@' + pkg.version + ': main -> ./node.js');
+      }
     }
-  } else {
-    console.log(`[patch-debug] debug@${version} main is "${pkg.main}" — no patch needed.`);
+  } catch (err) {
+    console.warn('[patch-debug] Could not patch nested debug:', err.message);
   }
-} catch (err) {
-  console.warn('[patch-debug] Could not patch debug package:', err.message);
-  // Non-fatal — don't block install
+} else {
+  console.log('[patch-debug] No nested debug package — all good.');
 }
