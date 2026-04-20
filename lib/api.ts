@@ -3,14 +3,24 @@
  * We use direct fetch (not tRPC client) for simplicity in React Native,
  * since the tRPC client requires a full router type import which pulls in Node.js deps.
  */
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const API = "https://humanaize.life/trpc";
+const API = "https://humanaize.life/api/trpc";
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const token = await AsyncStorage.getItem("session_token");
+    if (token) return { "Authorization": `Bearer ${token}` };
+  } catch {}
+  return {};
+}
 
 async function trpcQuery(procedure: string, input?: object) {
   const params = input ? `?input=${encodeURIComponent(JSON.stringify({ json: input }))}` : "";
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API}/${procedure}${params}`, {
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
   });
   const data = await res.json();
   if (data?.error) throw new Error(data.error.message || "API error");
@@ -18,10 +28,11 @@ async function trpcQuery(procedure: string, input?: object) {
 }
 
 async function trpcMutation(procedure: string, input: object) {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API}/${procedure}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ json: input }),
   });
   const data = await res.json();
@@ -100,7 +111,11 @@ export async function apiLogMeasurement(data: object) {
 
 // ── Food Scanning ───────────────────────────────────────────────────────────
 export async function apiScanBarcode(barcode: string) {
-  return trpcQuery("food.searchWithAI", { query: barcode, isBarcode: true });
+  return trpcQuery("food.lookupBarcode", { barcode });
+}
+
+export async function apiAIScanFood(imageBase64: string) {
+  return trpcMutation("food.aiScanFood", { imageBase64 });
 }
 
 export async function apiCalculateMacros(data: {
