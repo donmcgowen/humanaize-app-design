@@ -248,8 +248,7 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     }
     setSearching(false);
   }
-
-  // ── Barcode ─────────────────────────────────────────────────────────────────
+  // ── Barcode ──────────────────────────────────────────────────────────────────
   async function handleBarcodeScanned({ data }: { data: string }) {
     if (scanned || scanLoading) return;
     setScanned(true);
@@ -257,15 +256,33 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
     try {
       const result = await apiScanBarcode(data);
       if (result) {
+        // Use the same per-100g mapping as search results for accurate scaling.
+        // The server now returns per-serving macros in calories/protein/carbs/fat
+        // AND per-100g values in caloriesPer100g etc. for live preview scaling.
+        const r = result as any;
+        const cal100  = Number(r.caloriesPer100g  ?? r.calories  ?? 0);
+        const pro100  = Number(r.proteinPer100g   ?? r.protein   ?? 0);
+        const carb100 = Number(r.carbsPer100g     ?? r.carbs     ?? 0);
+        const fat100  = Number(r.fatPer100g       ?? r.fat       ?? 0);
+        const servingWeightG = Number(r.servingWeightPerUnit ?? 0);
+        // Display macros = per-serving (already computed by server)
         setSelectedFood({
           name: result.name || "Scanned Product",
           brand: result.brand,
-          calories: result.calories ?? 0,
-          protein: result.protein ?? 0,
-          carbs: result.carbs ?? 0,
-          fat: result.fat ?? 0,
+          calories: Math.round(result.calories ?? 0),
+          protein:  Math.round((result.protein  ?? 0) * 10) / 10,
+          carbs:    Math.round((result.carbs    ?? 0) * 10) / 10,
+          fat:      Math.round((result.fat      ?? 0) * 10) / 10,
           servingSize: result.servingSize,
+          caloriesPer100g:  cal100,
+          proteinPer100g:   pro100,
+          carbsPer100g:     carb100,
+          fatPer100g:       fat100,
+          servingWeightPerUnit: servingWeightG > 0 ? servingWeightG : undefined,
         });
+        // Set default unit based on product type
+        if (r.defaultUnit) setUnit(r.defaultUnit);
+        else if (servingWeightG > 0) setUnit("serving");
         setMode("search"); // reuse confirm card flow
       } else {
         Alert.alert("Not Found", "Could not find nutrition info for this barcode.", [
