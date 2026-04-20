@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "HumanAIze",
-    "slug": "humanaize",
+    "slug": "humanaizeapp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -61,7 +61,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "853b4fdb-3948-4710-9697-5813d8aa7278"
       }
     }
   }
