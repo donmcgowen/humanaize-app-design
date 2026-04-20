@@ -261,6 +261,7 @@ export default function OnboardingScreen() {
         proteinTarget: parseInt(data.proteinTarget) || undefined,
         carbTarget: parseInt(data.carbTarget) || undefined,
         fatTarget: parseInt(data.fatTarget) || undefined,
+        onboardingCompleted: true,
       });
       router.replace("/(tabs)/dashboard");
     } catch (err: any) {
