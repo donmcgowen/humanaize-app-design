@@ -306,10 +306,30 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
       const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.7 });
       if (!photo.base64) throw new Error("No image data captured.");
       setAiProcessing(true);
-      const result = await apiAIScanFood(photo.base64, "product");
-      if (!result || !result.items || result.items.length === 0) {
+      const rawResult = await apiAIScanFood(photo.base64, "meal");
+      if (!rawResult || !rawResult.items || rawResult.items.length === 0) {
         throw new Error("Could not detect any nutrition information. Try pointing the camera at a nutrition label.");
       }
+      // Coerce all macro values to numbers to handle string responses from AI
+      const result: AIScanResult = {
+        ...rawResult,
+        items: rawResult.items.map((item: any) => ({
+          name:        item.name        ?? "Unknown",
+          portionSize: item.portionSize ?? item.serving_size ?? item.servingSize ?? "",
+          calories:    Number(item.calories ?? item.kcal ?? 0),
+          protein:     Number(item.protein  ?? item.proteins ?? 0),
+          carbs:       Number(item.carbs    ?? item.carbohydrates ?? item.carbs_g ?? 0),
+          fat:         Number(item.fat      ?? item.fats ?? item.fat_g ?? 0),
+        })),
+        totals: rawResult.totals
+          ? {
+              calories: Number(rawResult.totals.calories ?? 0),
+              protein:  Number(rawResult.totals.protein  ?? 0),
+              carbs:    Number(rawResult.totals.carbs    ?? 0),
+              fat:      Number(rawResult.totals.fat      ?? 0),
+            }
+          : { calories: 0, protein: 0, carbs: 0, fat: 0 },
+      };
       setAiResult(result);
       // Select all items by default
       setAiSelectedItems(new Set(result.items.map((_: any, i: number) => i)));
@@ -348,10 +368,10 @@ function AddFoodSheet({ visible, meal, date, onClose, onAdded }: AddFoodSheetPro
       for (const item of selectedItems) {
         await apiAddFoodEntry({
           name: item.name,
-          calories: item.calories,
-          protein: item.protein,
-          carbs: item.carbs,
-          fat: item.fat,
+          calories: Math.max(0, Math.round(Number(item.calories) || 0)),
+          protein:  Math.max(0, parseFloat((Number(item.protein) || 0).toFixed(1))),
+          carbs:    Math.max(0, parseFloat((Number(item.carbs)   || 0).toFixed(1))),
+          fat:      Math.max(0, parseFloat((Number(item.fat)     || 0).toFixed(1))),
           meal,
           amount: 1,
           unit: "serving",

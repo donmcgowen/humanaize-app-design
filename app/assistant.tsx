@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width: W } = Dimensions.get("window");
 
@@ -112,10 +113,15 @@ export default function AssistantScreen() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const res = await fetch("https://humanaize.life/trpc/ai.askAssistant", {
+      // Read auth token stored by lib/auth.ts login()
+      const token = await AsyncStorage.getItem("humanaize_token").catch(() => null);
+      const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (token) authHeaders["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch("https://humanaize.life/api/trpc/ai.askAssistant", {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({
           json: {
             message: content,
@@ -126,8 +132,10 @@ export default function AssistantScreen() {
       const json = await res.json();
       const reply =
         json?.result?.data?.json?.response ??
+        json?.result?.data?.json?.message ??
         json?.result?.data?.response ??
         json?.result?.data?.message ??
+        json?.error?.message ??
         "I'm having trouble connecting right now. Please try again.";
 
       const aiMsg: Message = {

@@ -27,7 +27,8 @@ import {
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from "expo-camera";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { apiScanBarcode, apiAddFoodEntry } from "../lib/api";
+import { apiScanBarcode, apiAddFoodEntry, apiAIScanFood } from "../lib/api";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -173,33 +174,37 @@ export default function ScanScreen() {
 
       if (!photo?.base64) throw new Error("Failed to capture image");
 
-      // Call backend Gemini vision endpoint
-      const res = await fetch("https://humanaize.life/trpc/food.scanFoodImage", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ json: { image: photo.base64 } }),
-      });
-      const json = await res.json();
-      const data = json?.result?.data?.json ?? json?.result?.data;
+      // Use the shared apiAIScanFood helper (correct endpoint + auth token)
+      const scanData = await apiAIScanFood(photo.base64, "meal");
 
-      if (data?.name) {
-        const r: MacroResult = {
-          name: data.name,
-          brand: data.brand,
-          calories: Math.round(data.calories ?? 0),
-          protein: parseFloat((data.protein ?? 0).toFixed(1)),
-          carbs: parseFloat((data.carbs ?? 0).toFixed(1)),
-          fat: parseFloat((data.fat ?? 0).toFixed(1)),
-          servingSize: data.servingSize,
-          servingUnit: data.servingUnit ?? "serving",
-          amount: 1,
-          source: "ai",
-        };
-        setResult(r);
-        setEditedResult({ ...r });
-        setAmount("1");
-        setUnit(r.servingUnit ?? "serving");
+      // analyzeMealPhoto returns { items, totals, mealName, description }
+      // Flatten: use totals if single-item, or sum all items
+      let name = "AI Detected Food";
+      let calories = 0, protein = 0, carbs = 0, fat = 0;
+
+      if (scanData?.items && scanData.items.length > 0) {
+        // Use the first item's name as the food name; sum macros across all items
+        name = scanData.mealName || scanData.items[0]?.name || name;
+        const totals = scanData.totals ?? scanData.items.reduce(
+          (acc: any, item: any) => ({
+            calories: acc.calories + (Number(item.calories) || 0),
+            protein:  acc.protein  + (Number(item.protein)  || 0),
+            carbs:    acc.carbs    + (Number(item.carbs)    || 0),
+            fat:      acc.fat      + (Number(item.fat)      || 0),
+          }),
+          { calories: 0, protein: 0, carbs: 0, fat: 0 }
+        );
+        calories = Number(totals.calories) || 0;
+        protein  = Number(totals.protein)  || 0;
+        carbs    = Number(totals.carbs)    || 0;
+        fat      = Number(totals.fat)      || 0;
+      } else if (scanData?.name) {
+        // Flat response shape fallback
+        name     = scanData.name;
+        calories = Number(scanData.calories) || 0;
+        protein  = Number(scanData.protein)  || 0;
+        carbs    = Number(scanData.carbs)    || 0;
+        fat      = Number(scanData.fat)      || 0;
       } else {
         Alert.alert(
           "Nothing Detected",
@@ -208,6 +213,21 @@ export default function ScanScreen() {
         );
         return;
       }
+
+      const r: MacroResult = {
+        name,
+        calories: Math.round(calories),
+        protein:  parseFloat(protein.toFixed(1)),
+        carbs:    parseFloat(carbs.toFixed(1)),
+        fat:      parseFloat(fat.toFixed(1)),
+        servingUnit: "serving",
+        amount: 1,
+        source: "ai",
+      };
+      setResult(r);
+      setEditedResult({ ...r });
+      setAmount("1");
+      setUnit("serving");
     } catch (err: any) {
       Alert.alert("AI Error", err.message ?? "Could not analyse image.");
     } finally {
