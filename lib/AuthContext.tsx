@@ -23,7 +23,10 @@ const AuthContext = createContext<AuthContextType>({
   refreshUser: async () => {},
 });
 
-const SESSION_KEY = "humanaize_user";
+// lib/auth.ts login() stores user under "humanaize_session"
+// We also keep "humanaize_user" for backward compatibility
+const SESSION_KEY_AUTH = "humanaize_session";
+const SESSION_KEY_CTX  = "humanaize_user";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
@@ -32,9 +35,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   function setUser(u: User | null) {
     setUserState(u);
     if (u) {
-      AsyncStorage.setItem(SESSION_KEY, JSON.stringify(u));
+      AsyncStorage.setItem(SESSION_KEY_CTX, JSON.stringify(u));
     } else {
-      AsyncStorage.removeItem(SESSION_KEY);
+      AsyncStorage.removeItem(SESSION_KEY_CTX);
+      AsyncStorage.removeItem(SESSION_KEY_AUTH);
     }
   }
 
@@ -43,17 +47,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const me = await apiGetMe();
       if (me?.id) setUser(me);
     } catch {
-      // Not logged in
+      // Not logged in or network error — keep existing cached user
     }
   }
 
   useEffect(() => {
     async function init() {
       try {
-        // Try cached user first for instant load
-        const cached = await AsyncStorage.getItem(SESSION_KEY);
+        // Try both cache keys — prefer the one written by lib/auth.ts login()
+        const cached =
+          (await AsyncStorage.getItem(SESSION_KEY_AUTH)) ||
+          (await AsyncStorage.getItem(SESSION_KEY_CTX));
         if (cached) setUserState(JSON.parse(cached));
-        // Then verify with server
+        // Verify with server (uses humanaize_token set by lib/auth.ts)
         await refreshUser();
       } catch {}
       setLoading(false);

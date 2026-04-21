@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   Modal, TextInput, Alert, ActivityIndicator, RefreshControl,
-  Image,
+  Image, Pressable, FlatList,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { format } from "date-fns";
@@ -34,6 +34,129 @@ const ACTIVITY_LEVELS = [
   { id: "very_active", label: "Very Active", sub: "Twice daily" },
 ];
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+const DAY_NAMES = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+// ── Calendar Date Picker Component ─────────────────────────────────────────────
+function CalendarPicker({
+  visible,
+  value,
+  onConfirm,
+  onCancel,
+}: {
+  visible: boolean;
+  value: string;
+  onConfirm: (date: string) => void;
+  onCancel: () => void;
+}) {
+  const today = new Date();
+  const initial = value ? new Date(value + "T12:00:00") : new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const [viewYear, setViewYear] = useState(initial.getFullYear());
+  const [viewMonth, setViewMonth] = useState(initial.getMonth());
+  const [selected, setSelected] = useState<string>(value || "");
+
+  // Reset when opened
+  useEffect(() => {
+    if (visible) {
+      const d = value ? new Date(value + "T12:00:00") : new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      setViewYear(d.getFullYear());
+      setViewMonth(d.getMonth());
+      setSelected(value || "");
+    }
+  }, [visible]);
+
+  function prevMonth() {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  }
+  function nextMonth() {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  }
+
+  // Build calendar grid
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  function pad(n: number) { return String(n).padStart(2, "0"); }
+  function dateStr(day: number) {
+    return `${viewYear}-${pad(viewMonth + 1)}-${pad(day)}`;
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide">
+      <Pressable style={calStyles.overlay} onPress={onCancel} />
+      <View style={calStyles.sheet}>
+        {/* Header */}
+        <View style={calStyles.sheetHeader}>
+          <TouchableOpacity onPress={onCancel}>
+            <Text style={calStyles.cancelBtn}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={calStyles.sheetTitle}>Select Target Date</Text>
+          <TouchableOpacity onPress={() => selected ? onConfirm(selected) : onCancel()}>
+            <Text style={[calStyles.doneBtn, !selected && calStyles.doneBtnDisabled]}>Done</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Month Navigation */}
+        <View style={calStyles.monthNav}>
+          <TouchableOpacity onPress={prevMonth} style={calStyles.navArrow}>
+            <Text style={calStyles.navArrowText}>‹</Text>
+          </TouchableOpacity>
+          <Text style={calStyles.monthLabel}>{MONTH_NAMES[viewMonth]} {viewYear}</Text>
+          <TouchableOpacity onPress={nextMonth} style={calStyles.navArrow}>
+            <Text style={calStyles.navArrowText}>›</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Day-of-week headers */}
+        <View style={calStyles.dayHeaders}>
+          {DAY_NAMES.map(d => (
+            <Text key={d} style={calStyles.dayHeader}>{d}</Text>
+          ))}
+        </View>
+
+        {/* Calendar Grid */}
+        <View style={calStyles.grid}>
+          {cells.map((day, idx) => {
+            if (!day) return <View key={`empty-${idx}`} style={calStyles.cell} />;
+            const ds = dateStr(day);
+            const isSelected = ds === selected;
+            const isToday = ds === `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+            return (
+              <TouchableOpacity
+                key={ds}
+                style={[calStyles.cell, isSelected && calStyles.cellSelected, isToday && !isSelected && calStyles.cellToday]}
+                onPress={() => setSelected(ds)}
+              >
+                <Text style={[calStyles.cellText, isSelected && calStyles.cellTextSelected, isToday && !isSelected && calStyles.cellTextToday]}>
+                  {day}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Selected date display */}
+        <View style={calStyles.selectedRow}>
+          <Text style={calStyles.selectedLabel}>
+            {selected ? `Selected: ${format(new Date(selected + "T12:00:00"), "MMMM d, yyyy")}` : "No date selected"}
+          </Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// ── Profile Row ────────────────────────────────────────────────────────────────
 function ProfileRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.profileRow}>
@@ -43,6 +166,7 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ── Main Screen ────────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const { user, setUser } = useAuth();
   const [profile, setProfile] = useState<any>(null);
@@ -50,6 +174,7 @@ export default function ProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDatePicker, setShowDatePicker] = useState(false);
 
   // Edit form state
   const [name, setName] = useState("");
@@ -104,7 +229,7 @@ export default function ProfileScreen() {
   async function handleSave() {
     setSaving(true);
     try {
-      await apiUpdateProfile({
+      const payload: Record<string, any> = {
         name: name.trim() || undefined,
         age: age ? parseInt(age) : undefined,
         height: height ? parseFloat(height) : undefined,
@@ -114,7 +239,10 @@ export default function ProfileScreen() {
         activityLevel,
         healthConditions,
         targetDate: targetDate || undefined,
-      });
+      };
+      // Remove undefined keys so they don't overwrite existing data with null
+      Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
+      await apiUpdateProfile(payload);
       setShowEditModal(false);
       await loadProfile();
     } catch (err: any) {
@@ -134,6 +262,8 @@ export default function ProfileScreen() {
           } catch {}
           await AsyncStorage.removeItem("humanaize_session");
           await AsyncStorage.removeItem("humanaize_user");
+          await AsyncStorage.removeItem("humanaize_token");
+          await AsyncStorage.removeItem("session_token");
           setUser(null);
           router.replace("/(auth)/login");
         },
@@ -221,7 +351,7 @@ export default function ProfileScreen() {
             <ProfileRow label="Current Weight" value={profile?.currentWeight ? `${profile.currentWeight} lbs` : ""} />
             <ProfileRow label="Goal Weight" value={profile?.goalWeight ? `${profile.goalWeight} lbs` : ""} />
             <ProfileRow label="Activity Level" value={activityInfo?.label ?? ""} />
-            <ProfileRow label="Target Date" value={profile?.targetDate ? format(new Date(profile.targetDate), "MMM d, yyyy") : ""} />
+            <ProfileRow label="Target Date" value={profile?.targetDate ? format(new Date(profile.targetDate + "T12:00:00"), "MMM d, yyyy") : ""} />
           </View>
 
           {/* Health Conditions */}
@@ -297,7 +427,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.modalScroll}>
+          <ScrollView style={styles.modalScroll} keyboardShouldPersistTaps="handled">
             <Text style={styles.fieldLabel}>Name</Text>
             <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Your name" placeholderTextColor={Colors.textMuted} />
 
@@ -362,15 +492,152 @@ export default function ProfileScreen() {
               ))}
             </View>
 
-            <Text style={styles.fieldLabel}>Target Date (YYYY-MM-DD)</Text>
-            <TextInput style={styles.input} value={targetDate} onChangeText={setTargetDate} placeholder="2025-12-31" placeholderTextColor={Colors.textMuted} />
+            {/* Target Date — Calendar Picker */}
+            <Text style={styles.fieldLabel}>Target Date</Text>
+            <TouchableOpacity
+              style={styles.datePickerBtn}
+              onPress={() => setShowDatePicker(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={targetDate ? styles.datePickerText : styles.datePickerPlaceholder}>
+                {targetDate ? format(new Date(targetDate + "T12:00:00"), "MMMM d, yyyy") : "Tap to select a date"}
+              </Text>
+              <Text style={styles.datePickerIcon}>📅</Text>
+            </TouchableOpacity>
+            {targetDate ? (
+              <TouchableOpacity onPress={() => setTargetDate("")} style={styles.clearDateBtn}>
+                <Text style={styles.clearDateText}>Clear date</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Bottom padding so last item isn't hidden behind keyboard */}
+            <View style={{ height: 40 }} />
           </ScrollView>
         </View>
       </Modal>
+
+      {/* Calendar Date Picker — slides up from bottom */}
+      <CalendarPicker
+        visible={showDatePicker}
+        value={targetDate}
+        onConfirm={(date) => { setTargetDate(date); setShowDatePicker(false); }}
+        onCancel={() => setShowDatePicker(false)}
+      />
     </View>
   );
 }
 
+// ── Calendar Styles ────────────────────────────────────────────────────────────
+const calStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  sheet: {
+    backgroundColor: "#1e293b",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingBottom: 32,
+    paddingHorizontal: 16,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.1)",
+  },
+  sheetTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#f1f5f9",
+  },
+  cancelBtn: {
+    fontSize: 15,
+    color: "#94a3b8",
+  },
+  doneBtn: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#22d3ee",
+  },
+  doneBtnDisabled: {
+    color: "#475569",
+  },
+  monthNav: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 14,
+  },
+  navArrow: {
+    padding: 8,
+  },
+  navArrowText: {
+    fontSize: 28,
+    color: "#22d3ee",
+    lineHeight: 28,
+  },
+  monthLabel: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#f1f5f9",
+  },
+  dayHeaders: {
+    flexDirection: "row",
+    marginBottom: 4,
+  },
+  dayHeader: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748b",
+    paddingVertical: 4,
+  },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  cell: {
+    width: "14.28%",
+    aspectRatio: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  cellSelected: {
+    backgroundColor: "#22d3ee",
+    borderRadius: 100,
+  },
+  cellToday: {
+    borderWidth: 1.5,
+    borderColor: "#22d3ee",
+    borderRadius: 100,
+  },
+  cellText: {
+    fontSize: 14,
+    color: "#cbd5e1",
+  },
+  cellTextSelected: {
+    color: "#0f172a",
+    fontWeight: "700",
+  },
+  cellTextToday: {
+    color: "#22d3ee",
+    fontWeight: "600",
+  },
+  selectedRow: {
+    alignItems: "center",
+    paddingTop: 12,
+  },
+  selectedLabel: {
+    fontSize: 13,
+    color: "#94a3b8",
+  },
+});
+
+// ── Main Styles ────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: 16, paddingBottom: 40 },
@@ -433,4 +700,20 @@ const styles = StyleSheet.create({
   conditionOptionActive: { backgroundColor: "rgba(239,68,68,0.1)", borderColor: "rgba(239,68,68,0.4)" },
   conditionOptionText: { fontSize: 13, color: Colors.textSecondary },
   conditionOptionTextActive: { color: "#f87171", fontWeight: "600" },
+  // Date Picker Button
+  datePickerBtn: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  datePickerText: { fontSize: 15, color: Colors.textPrimary },
+  datePickerPlaceholder: { fontSize: 15, color: Colors.textMuted },
+  datePickerIcon: { fontSize: 18 },
+  clearDateBtn: { marginTop: 6, alignSelf: "flex-end" },
+  clearDateText: { fontSize: 12, color: Colors.textMuted, textDecorationLine: "underline" },
 });

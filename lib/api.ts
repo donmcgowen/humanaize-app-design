@@ -9,7 +9,8 @@ const API = "https://humanaize.life/api/trpc";
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   try {
-    const token = await AsyncStorage.getItem("session_token");
+    // "humanaize_token" is the key used by lib/auth.ts login()
+    const token = await AsyncStorage.getItem("humanaize_token");
     if (token) return { "Authorization": `Bearer ${token}` };
   } catch {}
   return {};
