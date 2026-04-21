@@ -109,6 +109,15 @@ export default function ScanScreen() {
       try {
         const data = await apiScanBarcode(barcode);
         if (data?.name) {
+          // Determine best default unit from serving size string
+          const servingStr = (data.servingSize ?? "").toLowerCase();
+          let defaultUnit = data.servingUnit ?? "serving";
+          if (!data.servingUnit) {
+            if (servingStr.includes("scoop")) defaultUnit = "scoop";
+            else if (servingStr.includes(" oz") || servingStr.includes("fl oz")) defaultUnit = "oz";
+            else if (servingStr.includes(" g") || servingStr.includes("gram")) defaultUnit = "g";
+            else if (servingStr.includes("cup")) defaultUnit = "cup";
+          }
           const r: MacroResult = {
             name: data.name,
             brand: data.brand,
@@ -117,14 +126,14 @@ export default function ScanScreen() {
             carbs: parseFloat((data.carbs ?? 0).toFixed(1)),
             fat: parseFloat((data.fat ?? 0).toFixed(1)),
             servingSize: data.servingSize,
-            servingUnit: data.servingUnit,
+            servingUnit: defaultUnit,
             amount: data.amount ?? 1,
             source: "barcode",
           };
           setResult(r);
           setEditedResult({ ...r });
           setAmount(String(r.amount ?? 1));
-          setUnit(r.servingUnit ?? "serving");
+          setUnit(defaultUnit);
         } else {
           Alert.alert(
             "Product Not Found",
@@ -174,8 +183,8 @@ export default function ScanScreen() {
 
       if (!photo?.base64) throw new Error("Failed to capture image");
 
-      // Use the shared apiAIScanFood helper (correct endpoint + auth token)
-      const scanData = await apiAIScanFood(photo.base64, "meal");
+      // Use "product" mode for scanning nutrition/supplement labels
+      const scanData = await apiAIScanFood(photo.base64, "product");
 
       // analyzeMealPhoto returns { items, totals, mealName, description }
       // Flatten: use totals if single-item, or sum all items

@@ -111,8 +111,73 @@ export async function apiLogMeasurement(data: object) {
 }
 
 // ── Food Scanning ───────────────────────────────────────────────────────────
+
+/**
+ * Fetch product data directly from Open Food Facts (free, no API key).
+ * Returns null if not found.
+ */
+async function fetchOpenFoodFacts(barcode: string): Promise<any | null> {
+  try {
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v0/product/${barcode}.json`,
+      { headers: { "User-Agent": "HumanAIze/1.0" } }
+    );
+    const json = await res.json();
+    if (json?.status !== 1 || !json?.product) return null;
+    const p = json.product;
+    const n = p.nutriments ?? {};
+    // Prefer per-serving values; fall back to per-100g scaled by serving weight
+    const servingWeightG = parseFloat(p.serving_quantity ?? p.serving_size_g ?? "0") || 0;
+    const cal   = Number(n["energy-kcal_serving"] ?? n["energy-kcal_100g"] ?? 0);
+    const pro   = Number(n["proteins_serving"]    ?? n["proteins_100g"]    ?? 0);
+    const carbs = Number(n["carbohydrates_serving"] ?? n["carbohydrates_100g"] ?? 0);
+    const fat   = Number(n["fat_serving"]          ?? n["fat_100g"]          ?? 0);
+    const cal100  = Number(n["energy-kcal_100g"]     ?? 0);
+    const pro100  = Number(n["proteins_100g"]         ?? 0);
+    const carb100 = Number(n["carbohydrates_100g"]    ?? 0);
+    const fat100  = Number(n["fat_100g"]              ?? 0);
+    if (cal === 0 && pro === 0) return null; // no useful data
+    return {
+      name:    p.product_name || p.product_name_en || "Unknown Product",
+      brand:   p.brands || undefined,
+      calories: Math.round(cal),
+      protein:  parseFloat(pro.toFixed(1)),
+      carbs:    parseFloat(carbs.toFixed(1)),
+      fat:      parseFloat(fat.toFixed(1)),
+      caloriesPer100g:  cal100,
+      proteinPer100g:   pro100,
+      carbsPer100g:     carb100,
+      fatPer100g:       fat100,
+      servingSize:      p.serving_size || undefined,
+      servingWeightPerUnit: servingWeightG > 0 ? servingWeightG : undefined,
+      source: "openfoodfacts",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function apiScanBarcode(barcode: string) {
-  return trpcQuery("food.lookupBarcode", { barcode });
+  // Try the backend first
+  let result: any = null;
+  try {
+    result = await trpcQuery("food.lookupBarcode", { barcode });
+  } catch {
+    result = null;
+  }
+
+  // If backend returns bad/missing macros (calories ≤ 10 or all zeros),
+  // fall back to Open Food Facts which has accurate per-serving data.
+  const backendCalories = Number(result?.calories ?? 0);
+  const backendProtein  = Number(result?.protein  ?? 0);
+  const hasBadMacros    = !result?.name || (backendCalories <= 10 && backendProtein <= 1);
+
+  if (hasBadMacros) {
+    const off = await fetchOpenFoodFacts(barcode);
+    if (off) return off;
+  }
+
+  return result;
 }
 
 export async function apiAIScanFood(imageBase64: string, scanMode: "product" | "meal" = "product") {
