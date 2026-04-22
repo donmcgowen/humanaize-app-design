@@ -18,20 +18,20 @@ const HEALTH_CONDITIONS = [
   "Lactose Intolerance", "Kidney Disease", "None",
 ];
 
+// Backend fitnessGoal values: "lose_fat" | "build_muscle" | "maintain"
 const GOALS = [
-  { id: "lose_weight", label: "Lose Weight", icon: "📉" },
-  { id: "gain_muscle", label: "Gain Muscle", icon: "💪" },
+  { id: "lose_fat", label: "Lose Weight", icon: "📉" },
+  { id: "build_muscle", label: "Gain Muscle", icon: "💪" },
   { id: "maintain", label: "Maintain Weight", icon: "⚖️" },
-  { id: "improve_health", label: "Improve Health", icon: "❤️" },
-  { id: "athletic_performance", label: "Athletic Performance", icon: "🏆" },
 ];
 
+// Backend activityLevel values: "sedentary" | "lightly_active" | "moderately_active" | "very_active" | "extremely_active"
 const ACTIVITY_LEVELS = [
   { id: "sedentary", label: "Sedentary", sub: "Little or no exercise" },
-  { id: "light", label: "Light", sub: "1-3 days/week" },
-  { id: "moderate", label: "Moderate", sub: "3-5 days/week" },
-  { id: "active", label: "Active", sub: "6-7 days/week" },
-  { id: "very_active", label: "Very Active", sub: "Twice daily" },
+  { id: "lightly_active", label: "Light", sub: "1-3 days/week" },
+  { id: "moderately_active", label: "Moderate", sub: "3-5 days/week" },
+  { id: "very_active", label: "Active", sub: "6-7 days/week" },
+  { id: "extremely_active", label: "Very Active", sub: "Twice daily" },
 ];
 
 const MONTH_NAMES = [
@@ -182,8 +182,8 @@ export default function ProfileScreen() {
   const [height, setHeight] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
-  const [goal, setGoal] = useState("lose_weight");
-  const [activityLevel, setActivityLevel] = useState("moderate");
+  const [goal, setGoal] = useState("lose_fat");
+  const [activityLevel, setActivityLevel] = useState("moderately_active");
   const [healthConditions, setHealthConditions] = useState<string[]>([]);
   const [targetDate, setTargetDate] = useState("");
 
@@ -193,14 +193,30 @@ export default function ProfileScreen() {
       setProfile(prof);
       if (prof) {
         setName(prof.name ?? user?.name ?? "");
-        setAge(prof.age ? String(prof.age) : "");
-        setHeight(prof.height ? String(prof.height) : "");
-        setCurrentWeight(prof.currentWeight ? String(prof.currentWeight) : "");
-        setGoalWeight(prof.goalWeight ? String(prof.goalWeight) : "");
-        setGoal(prof.goal ?? "lose_weight");
-        setActivityLevel(prof.activityLevel ?? "moderate");
-        setHealthConditions(prof.healthConditions ?? []);
-        setTargetDate(prof.targetDate ?? "");
+        // Backend fields: ageYears, heightIn, weightLbs, goalWeightLbs, fitnessGoal, activityLevel, goalDate (ms)
+        setAge(prof.ageYears ? String(prof.ageYears) : "");
+        setHeight(prof.heightIn ? String(prof.heightIn) : "");
+        setCurrentWeight(prof.weightLbs ? String(prof.weightLbs) : "");
+        setGoalWeight(prof.goalWeightLbs ? String(prof.goalWeightLbs) : "");
+        setGoal(prof.fitnessGoal ?? "lose_fat");
+        setActivityLevel(prof.activityLevel ?? "moderately_active");
+        // healthConditions is stored as JSON string in DB
+        let hc: string[] = [];
+        if (Array.isArray(prof.healthConditions)) hc = prof.healthConditions;
+        else if (typeof prof.healthConditions === "string" && prof.healthConditions) {
+          try { hc = JSON.parse(prof.healthConditions); } catch { hc = [prof.healthConditions]; }
+        }
+        setHealthConditions(hc);
+        // goalDate is Unix ms timestamp → convert to YYYY-MM-DD
+        if (prof.goalDate) {
+          const d = new Date(Number(prof.goalDate));
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const dd = String(d.getDate()).padStart(2, "0");
+          setTargetDate(`${yyyy}-${mm}-${dd}`);
+        } else {
+          setTargetDate("");
+        }
       }
     } catch {}
     setLoading(false);
@@ -229,20 +245,26 @@ export default function ProfileScreen() {
   async function handleSave() {
     setSaving(true);
     try {
+      // Map UI field names → backend schema field names
       const payload: Record<string, any> = {
-        name: name.trim() || undefined,
-        age: age ? parseInt(age) : undefined,
-        height: height ? parseFloat(height) : undefined,
-        currentWeight: currentWeight ? parseFloat(currentWeight) : undefined,
-        goalWeight: goalWeight ? parseFloat(goalWeight) : undefined,
-        goal,
-        activityLevel,
-        healthConditions,
-        targetDate: targetDate || undefined,
+        ageYears:      age ? parseInt(age, 10) : undefined,
+        heightIn:      height ? parseInt(height, 10) : undefined,
+        weightLbs:     currentWeight ? parseInt(currentWeight, 10) : undefined,
+        goalWeightLbs: goalWeight ? parseInt(goalWeight, 10) : undefined,
+        fitnessGoal:   goal as any,
+        activityLevel: activityLevel as any,
+        // healthConditions stored as JSON string
+        healthConditions: healthConditions.length > 0
+          ? JSON.stringify(healthConditions)
+          : undefined,
+        // goalDate: convert YYYY-MM-DD → Unix ms timestamp
+        goalDate: targetDate
+          ? new Date(targetDate + "T12:00:00").getTime()
+          : undefined,
       };
       // Remove undefined keys so they don't overwrite existing data with null
       Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
-      await apiUpdateProfile(payload);
+      await apiUpdateProfile(payload as any);
       setShowEditModal(false);
       await loadProfile();
     } catch (err: any) {
@@ -304,8 +326,8 @@ export default function ProfileScreen() {
     }
   }
 
-  const goalInfo = GOALS.find((g) => g.id === (profile?.goal ?? "lose_weight"));
-  const activityInfo = ACTIVITY_LEVELS.find((a) => a.id === (profile?.activityLevel ?? "moderate"));
+  const goalInfo = GOALS.find((g) => g.id === (profile?.fitnessGoal ?? "lose_fat"));
+  const activityInfo = ACTIVITY_LEVELS.find((a) => a.id === (profile?.activityLevel ?? "moderately_active"));
 
   return (
     <View style={styles.container}>
@@ -346,12 +368,12 @@ export default function ProfileScreen() {
           {/* Profile Stats */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>📋 Profile</Text>
-            <ProfileRow label="Age" value={profile?.age ? `${profile.age} years` : ""} />
-            <ProfileRow label="Height" value={profile?.height ? `${profile.height} in` : ""} />
-            <ProfileRow label="Current Weight" value={profile?.currentWeight ? `${profile.currentWeight} lbs` : ""} />
-            <ProfileRow label="Goal Weight" value={profile?.goalWeight ? `${profile.goalWeight} lbs` : ""} />
+            <ProfileRow label="Age" value={profile?.ageYears ? `${profile.ageYears} years` : ""} />
+            <ProfileRow label="Height" value={profile?.heightIn ? `${profile.heightIn} in` : ""} />
+            <ProfileRow label="Current Weight" value={profile?.weightLbs ? `${profile.weightLbs} lbs` : ""} />
+            <ProfileRow label="Goal Weight" value={profile?.goalWeightLbs ? `${profile.goalWeightLbs} lbs` : ""} />
             <ProfileRow label="Activity Level" value={activityInfo?.label ?? ""} />
-            <ProfileRow label="Target Date" value={profile?.targetDate ? format(new Date(profile.targetDate + "T12:00:00"), "MMM d, yyyy") : ""} />
+            <ProfileRow label="Target Date" value={profile?.goalDate ? format(new Date(Number(profile.goalDate)), "MMM d, yyyy") : ""} />
           </View>
 
           {/* Health Conditions */}
@@ -377,15 +399,15 @@ export default function ProfileScreen() {
                 <Text style={styles.targetLabel}>Calories</Text>
               </View>
               <View style={styles.targetItem}>
-                <Text style={[styles.targetVal, { color: Colors.protein }]}>{profile?.proteinTarget ?? "—"}g</Text>
+                <Text style={[styles.targetVal, { color: Colors.protein }]}>{profile?.dailyProteinTarget ?? "—"}g</Text>
                 <Text style={styles.targetLabel}>Protein</Text>
               </View>
               <View style={styles.targetItem}>
-                <Text style={[styles.targetVal, { color: Colors.carbs }]}>{profile?.carbTarget ?? "—"}g</Text>
+                <Text style={[styles.targetVal, { color: Colors.carbs }]}>{profile?.dailyCarbsTarget ?? "—"}g</Text>
                 <Text style={styles.targetLabel}>Carbs</Text>
               </View>
               <View style={styles.targetItem}>
-                <Text style={[styles.targetVal, { color: Colors.fat }]}>{profile?.fatTarget ?? "—"}g</Text>
+                <Text style={[styles.targetVal, { color: Colors.fat }]}>{profile?.dailyFatTarget ?? "—"}g</Text>
                 <Text style={styles.targetLabel}>Fat</Text>
               </View>
             </View>

@@ -118,7 +118,7 @@ export default function AssistantScreen() {
       const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
       if (token) authHeaders["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch("https://humanaize.life/api/trpc/ai.askAssistant", {
+      const res = await fetch("https://humanaize.life/api/trpc/profile.askAssistant", {
         method: "POST",
         credentials: "include",
         headers: authHeaders,
@@ -130,12 +130,15 @@ export default function AssistantScreen() {
         }),
       });
       const json = await res.json();
+      // Backend returns { success: true, reply: "..." }
       const reply =
+        json?.result?.data?.json?.reply ??
+        json?.result?.data?.reply ??
         json?.result?.data?.json?.response ??
         json?.result?.data?.json?.message ??
         json?.result?.data?.response ??
         json?.result?.data?.message ??
-        json?.error?.message ??
+        (json?.error ? (json.error?.json?.message ?? json.error?.message ?? "Server error") : null) ??
         "I'm having trouble connecting right now. Please try again.";
 
       const aiMsg: Message = {

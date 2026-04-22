@@ -1,7 +1,6 @@
 /**
  * Shared API helpers — thin wrappers around the humanaize.life REST/tRPC API.
- * We use direct fetch (not tRPC client) for simplicity in React Native,
- * since the tRPC client requires a full router type import which pulls in Node.js deps.
+ * All procedure names match the live web app backend (HumanAIze-app/server/routers.ts).
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -11,20 +10,28 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   try {
     // "humanaize_token" is the key used by lib/auth.ts login()
     const token = await AsyncStorage.getItem("humanaize_token");
-    if (token) return { "Authorization": `Bearer ${token}` };
+    if (token) return { Authorization: `Bearer ${token}` };
   } catch {}
   return {};
 }
 
 async function trpcQuery(procedure: string, input?: object) {
-  const params = input ? `?input=${encodeURIComponent(JSON.stringify({ json: input }))}` : "";
+  const params = input
+    ? `?input=${encodeURIComponent(JSON.stringify({ json: input }))}`
+    : "";
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API}/${procedure}${params}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json", ...authHeaders },
   });
   const data = await res.json();
-  if (data?.error) throw new Error(data.error.message || "API error");
+  if (data?.error) {
+    const msg =
+      data.error?.json?.message ||
+      data.error?.message ||
+      "API error";
+    throw new Error(msg);
+  }
   return data?.result?.data?.json ?? data?.result?.data;
 }
 
@@ -37,7 +44,13 @@ async function trpcMutation(procedure: string, input: object) {
     body: JSON.stringify({ json: input }),
   });
   const data = await res.json();
-  if (data?.error) throw new Error(data.error.message || "API error");
+  if (data?.error) {
+    const msg =
+      data.error?.json?.message ||
+      data.error?.message ||
+      "API error";
+    throw new Error(msg);
+  }
   return data?.result?.data?.json ?? data?.result?.data;
 }
 
@@ -46,7 +59,12 @@ export async function apiLogin(username: string, password: string) {
   return trpcMutation("auth.login", { username, password });
 }
 
-export async function apiSignup(params: { username: string; email: string; password: string; name?: string }) {
+export async function apiSignup(params: {
+  username: string;
+  email: string;
+  password: string;
+  name?: string;
+}) {
   return trpcMutation("auth.signup", params);
 }
 
@@ -58,132 +76,221 @@ export async function apiGetMe() {
   return trpcQuery("auth.me");
 }
 
-// ── User Profile ──────────────────────────────────────────────────────────────
+// ── Profile (profile.* router — matches web app) ──────────────────────────────
+/**
+ * Get the user's fitness profile.
+ * Web: trpc.profile.get
+ */
 export async function apiGetProfile() {
-  return trpcQuery("user.getProfile");
+  return trpcQuery("profile.get");
 }
 
-export async function apiUpdateProfile(data: object) {
-  return trpcMutation("user.updateProfile", data);
+/**
+ * Save / update the user's fitness profile.
+ * Web: trpc.profile.upsert
+ * Field names match the backend schema exactly.
+ */
+export async function apiUpdateProfile(data: {
+  heightIn?: number;
+  weightLbs?: number;
+  ageYears?: number;
+  fitnessGoal?: "lose_fat" | "build_muscle" | "maintain";
+  activityLevel?:
+    | "sedentary"
+    | "lightly_active"
+    | "moderately_active"
+    | "very_active"
+    | "extremely_active";
+  diabetesType?: "type1" | "type2" | "prediabetes" | "gestational" | "other";
+  goalWeightLbs?: number;
+  goalDate?: number; // Unix ms timestamp
+  dailyCalorieTarget?: number;
+  dailyProteinTarget?: number;
+  dailyCarbsTarget?: number;
+  dailyFatTarget?: number;
+  gender?: "male" | "female" | "other";
+  healthConditions?: string;
+  onboardingCompleted?: boolean;
+}) {
+  return trpcMutation("profile.upsert", data);
 }
 
-// ── Food Log ──────────────────────────────────────────────────────────────────
+/**
+ * Generate an AI fitness plan.
+ * Web: trpc.profile.generateAIPlan
+ */
+export async function apiGetAIPlan(data: object) {
+  return trpcMutation("profile.generateAIPlan", data);
+}
+
+// ── Food Log (food.* router) ──────────────────────────────────────────────────
+/**
+ * Get food log entries for a given date.
+ * Web: trpc.food.getFoodLog  (input: { date: "yyyy-MM-dd" })
+ */
 export async function apiGetFoodLog(date: string) {
   return trpcQuery("food.getFoodLog", { date });
 }
 
-export async function apiAddFoodEntry(entry: object) {
+/**
+ * Add a food entry to the log.
+ * Web: trpc.food.addFoodEntry
+ */
+export async function apiAddFoodEntry(entry: {
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  meal?: string; // "Breakfast" | "Lunch" | "Dinner" | "Snacks"
+  amount?: number;
+  unit?: string;
+  date?: string; // "yyyy-MM-dd"
+}) {
   return trpcMutation("food.addFoodEntry", entry);
 }
 
+/**
+ * Delete a food log entry.
+ * Web: trpc.food.deleteFoodEntry  (input: { id })
+ */
 export async function apiDeleteFoodEntry(id: number) {
   return trpcMutation("food.deleteFoodEntry", { id });
 }
 
+/**
+ * Search for food using AI / Open Food Facts.
+ * Web: trpc.food.searchWithAI  (publicProcedure — no auth needed)
+ */
 export async function apiSearchFood(query: string) {
   return trpcQuery("food.searchWithAI", { query });
 }
 
-// ── Workouts ──────────────────────────────────────────────────────────────────
-export async function apiGetWorkouts(date?: string) {
-  return trpcQuery("workout.getWorkouts", date ? { date } : undefined);
+/**
+ * Get recently logged foods.
+ * Web: trpc.food.getRecent
+ */
+export async function apiGetRecentFoods() {
+  return trpcQuery("food.getRecent");
 }
 
-export async function apiLogWorkout(data: object) {
-  return trpcMutation("workout.logWorkout", data);
+// ── Workouts (workouts.* router) ──────────────────────────────────────────────
+/**
+ * Get workout entries for a date range.
+ * Web: trpc.workouts.getEntriesForDate  (input: { dayStart, dayEnd } Unix ms)
+ */
+export async function apiGetWorkouts(dayStart: number, dayEnd: number) {
+  return trpcQuery("workouts.getEntriesForDate", { dayStart, dayEnd });
 }
-
-// ── Monitoring / Weight ───────────────────────────────────────────────────────
-export async function apiGetWeightHistory() {
-  return trpcQuery("monitoring.getWeightHistory");
-}
-
-export async function apiLogWeight(weight: number, date: string, unit?: string) {
-  return trpcMutation("monitoring.logWeight", { weight, date, unit: unit ?? "lbs" });
-}
-
-export async function apiGetMeasurements() {
-  return trpcQuery("monitoring.getMeasurements");
-}
-
-export async function apiLogMeasurement(data: object) {
-  return trpcMutation("monitoring.logMeasurement", data);
-}
-
-// ── Food Scanning ───────────────────────────────────────────────────────────
 
 /**
- * Fetch product data directly from Open Food Facts (free, no API key).
- * Returns null if not found.
+ * Log a workout entry.
+ * Web: trpc.workouts.addEntry
  */
-async function fetchOpenFoodFacts(barcode: string): Promise<any | null> {
+export async function apiLogWorkout(data: {
+  exerciseName: string;
+  exerciseType: string;
+  durationMinutes: number;
+  caloriesBurned?: number;
+  intensity?: "light" | "moderate" | "intense";
+  notes?: string;
+  recordedAt?: number;
+}) {
+  return trpcMutation("workouts.addEntry", data);
+}
+
+/**
+ * Get AI workout plan recommendations.
+ * Web: trpc.workouts.getAIWorkoutPlan
+ */
+export async function apiGetAIWorkoutPlan() {
+  return trpcQuery("workouts.getAIWorkoutPlan");
+}
+
+// ── Weight Tracking (weight.* router) ────────────────────────────────────────
+/**
+ * Get weight history entries.
+ * Web: trpc.weight.getEntries  (input: { days: number })
+ */
+export async function apiGetWeightHistory(days = 90) {
+  return trpcQuery("weight.getEntries", { days });
+}
+
+/**
+ * Log a weight entry.
+ * Web: trpc.weight.addEntry  (input: { weightLbs, recordedAt, notes? })
+ */
+export async function apiLogWeight(weightLbs: number, recordedAt: number, notes?: string) {
+  return trpcMutation("weight.addEntry", { weightLbs, recordedAt, notes });
+}
+
+/**
+ * Get weekly weight loss rate and progress data.
+ * Web: trpc.weight.getWeeklyRate
+ */
+export async function apiGetWeightWeeklyRate() {
+  return trpcQuery("weight.getWeeklyRate");
+}
+
+// ── Body Measurements (bodyMeasurements.* router) ────────────────────────────
+/**
+ * Get body measurement entries.
+ * Web: trpc.bodyMeasurements.getEntries  (input: { limit })
+ */
+export async function apiGetMeasurements(limit = 100) {
+  return trpcQuery("bodyMeasurements.getEntries", { limit });
+}
+
+/**
+ * Log a body measurement.
+ * Web: trpc.bodyMeasurements.addEntry
+ */
+export async function apiLogMeasurement(data: {
+  chestInches?: number;
+  waistInches?: number;
+  hipsInches?: number;
+  notes?: string;
+}) {
+  return trpcMutation("bodyMeasurements.addEntry", data);
+}
+
+// ── Food Scanning ─────────────────────────────────────────────────────────────
+/**
+ * Look up a product by barcode.
+ * Routes through the backend (food.lookupBarcode) which uses Open Food Facts
+ * server-side — avoids mobile rate-limiting issues with direct OFf calls.
+ * Web: trpc.food.lookupBarcode  (input: { barcode: /^\d{8,14}$/ })
+ */
+export async function apiScanBarcode(barcode: string) {
+  // Use the backend endpoint — it calls Open Food Facts server-side
+  // and returns accurate per-serving macros with defaultUnit.
   try {
-    const res = await fetch(
-      `https://world.openfoodfacts.org/api/v0/product/${barcode}.json`,
-      { headers: { "User-Agent": "HumanAIze/1.0" } }
-    );
-    const json = await res.json();
-    if (json?.status !== 1 || !json?.product) return null;
-    const p = json.product;
-    const n = p.nutriments ?? {};
-    // Prefer per-serving values; fall back to per-100g scaled by serving weight
-    const servingWeightG = parseFloat(p.serving_quantity ?? p.serving_size_g ?? "0") || 0;
-    const cal   = Number(n["energy-kcal_serving"] ?? n["energy-kcal_100g"] ?? 0);
-    const pro   = Number(n["proteins_serving"]    ?? n["proteins_100g"]    ?? 0);
-    const carbs = Number(n["carbohydrates_serving"] ?? n["carbohydrates_100g"] ?? 0);
-    const fat   = Number(n["fat_serving"]          ?? n["fat_100g"]          ?? 0);
-    const cal100  = Number(n["energy-kcal_100g"]     ?? 0);
-    const pro100  = Number(n["proteins_100g"]         ?? 0);
-    const carb100 = Number(n["carbohydrates_100g"]    ?? 0);
-    const fat100  = Number(n["fat_100g"]              ?? 0);
-    if (cal === 0 && pro === 0) return null; // no useful data
-    return {
-      name:    p.product_name || p.product_name_en || "Unknown Product",
-      brand:   p.brands || undefined,
-      calories: Math.round(cal),
-      protein:  parseFloat(pro.toFixed(1)),
-      carbs:    parseFloat(carbs.toFixed(1)),
-      fat:      parseFloat(fat.toFixed(1)),
-      caloriesPer100g:  cal100,
-      proteinPer100g:   pro100,
-      carbsPer100g:     carb100,
-      fatPer100g:       fat100,
-      servingSize:      p.serving_size || undefined,
-      servingWeightPerUnit: servingWeightG > 0 ? servingWeightG : undefined,
-      source: "openfoodfacts",
-    };
+    const result = await trpcQuery("food.lookupBarcode", { barcode });
+    return result;
   } catch {
     return null;
   }
 }
 
-export async function apiScanBarcode(barcode: string) {
-  // Try the backend first
-  let result: any = null;
-  try {
-    result = await trpcQuery("food.lookupBarcode", { barcode });
-  } catch {
-    result = null;
-  }
-
-  // If backend returns bad/missing macros (calories ≤ 10 or all zeros),
-  // fall back to Open Food Facts which has accurate per-serving data.
-  const backendCalories = Number(result?.calories ?? 0);
-  const backendProtein  = Number(result?.protein  ?? 0);
-  const hasBadMacros    = !result?.name || (backendCalories <= 10 && backendProtein <= 1);
-
-  if (hasBadMacros) {
-    const off = await fetchOpenFoodFacts(barcode);
-    if (off) return off;
-  }
-
-  return result;
+/**
+ * Analyze a meal or product photo with AI.
+ * Web: trpc.food.analyzeMealPhoto
+ */
+export async function apiAIScanFood(
+  imageBase64: string,
+  scanMode: "product" | "meal" = "product"
+) {
+  return trpcMutation("food.analyzeMealPhoto", {
+    imageBase64,
+    mimeType: "image/jpeg",
+    scanMode,
+  });
 }
 
-export async function apiAIScanFood(imageBase64: string, scanMode: "product" | "meal" = "product") {
-  return trpcMutation("food.analyzeMealPhoto", { imageBase64, mimeType: "image/jpeg", scanMode });
-}
-
+/**
+ * Calculate macros for a given serving size.
+ * Web: trpc.food.calculateServingMacros
+ */
 export async function apiCalculateMacros(data: {
   foodName: string;
   amount: number;
@@ -194,15 +301,22 @@ export async function apiCalculateMacros(data: {
   fatPer100g: number;
   servingWeightG?: number;
 }) {
-  // calculateServingMacros is a tRPC query (GET), not a mutation
   return trpcQuery("food.calculateServingMacros", data);
 }
 
-// ── AI ────────────────────────────────────────────────────────────────────────
-export async function apiAskAssistant(message: string, context?: string) {
-  return trpcMutation("ai.askAssistant", { message, context });
-}
-
-export async function apiGetAIPlan() {
-  return trpcQuery("ai.getAIPlan");
+// ── AI Assistant (profile.* router) ──────────────────────────────────────────
+/**
+ * Ask the AI assistant a question.
+ * Web: trpc.profile.askAssistant
+ */
+export async function apiAskAssistant(
+  message: string,
+  context?: string,
+  profileSummary?: string
+) {
+  return trpcMutation("profile.askAssistant", {
+    message,
+    context,
+    profileSummary,
+  });
 }
