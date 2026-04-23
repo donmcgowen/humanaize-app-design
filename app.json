@@ -19,6 +19,7 @@
       "infoPlist": {
         "NSCameraUsageDescription": "HumanAIze uses the camera to scan barcodes and nutrition labels.",
         "NSPhotoLibraryUsageDescription": "HumanAIze accesses your photo library for progress photos.",
+        "NSMicrophoneUsageDescription": "HumanAIze uses your microphone to record voice workout descriptions.",
         "NSHealthShareUsageDescription": "HumanAIze reads health data to track your fitness goals.",
         "NSHealthUpdateUsageDescription": "HumanAIze writes health data to keep Apple Health in sync."
       }
@@ -30,7 +31,7 @@
       },
       "package": "life.humanaize.app",
       "versionCode": 1,
-      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "ACTIVITY_RECOGNITION", "INTERNET", "ACCESS_NETWORK_STATE"]
+      "permissions": ["CAMERA", "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "ACTIVITY_RECOGNITION", "INTERNET", "ACCESS_NETWORK_STATE", "RECORD_AUDIO"]
     },
     "web": {
       "bundler": "metro",
@@ -50,6 +51,12 @@
         {
           "photosPermission": "HumanAIze accesses your photos to add progress photos.",
           "cameraPermission": "HumanAIze uses your camera to take progress photos."
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "HumanAIze uses your microphone to record voice workout descriptions."
         }
       ]
     ],

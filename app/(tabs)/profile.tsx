@@ -9,7 +9,12 @@ import { format } from "date-fns";
 import { router } from "expo-router";
 import { Colors } from "../../constants/colors";
 import { useAuth } from "../../lib/AuthContext";
-import { apiGetProfile, apiUpdateProfile, apiLogout } from "../../lib/api";
+import {
+  apiGetProfile, apiUpdateProfile, apiLogout,
+  apiGetProgressPhotos, apiUploadProgressPhoto, apiDeleteProgressPhoto, apiAnalyzeBodyPhoto,
+} from "../../lib/api";
+import * as FileSystem from "expo-file-system";
+import * as ImageManipulator from "expo-image-manipulator";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const HEALTH_CONDITIONS = [
@@ -167,6 +172,30 @@ function ProfileRow({ label, value }: { label: string; value: string }) {
 }
 
 // ── Main Screen ────────────────────────────────────────────────────────────────
+interface ProgressPhoto {
+  id: number;
+  photoName: string;
+  photoDate: number;
+  description?: string;
+  photoUrl?: string;
+  photoBase64?: string;
+  createdAt: number;
+}
+
+interface BodyAnalysis {
+  estimatedBodyFatPercent: number | null;
+  estimatedMuscleMass: string;
+  overallHealthRating: string;
+  bmi: number | null;
+  positiveAreas: string[];
+  areasForImprovement: string[];
+  primaryRecommendation: string;
+  recommendationReason: string;
+  actionPlan: string[];
+  nutritionTips: string[];
+  disclaimer: string;
+}
+
 export default function ProfileScreen() {
   const { user, setUser } = useAuth();
   const [profile, setProfile] = useState<any>(null);
@@ -175,6 +204,19 @@ export default function ProfileScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Progress Photos state
+  const [progressPhotos, setProgressPhotos] = useState<ProgressPhoto[]>([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showPhotoNameModal, setShowPhotoNameModal] = useState(false);
+  const [pendingPhotoUri, setPendingPhotoUri] = useState<string | null>(null);
+  const [pendingPhotoName, setPendingPhotoName] = useState("");
+  const [pendingPhotoDesc, setPendingPhotoDesc] = useState("");
+  const [selectedPhoto, setSelectedPhoto] = useState<ProgressPhoto | null>(null);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [bodyAnalysis, setBodyAnalysis] = useState<BodyAnalysis | null>(null);
+  const [analyzingPhoto, setAnalyzingPhoto] = useState(false);
 
   // Edit form state
   const [name, setName] = useState("");
@@ -222,7 +264,16 @@ export default function ProfileScreen() {
     setLoading(false);
   }
 
-  useEffect(() => { loadProfile(); }, []);
+  useEffect(() => { loadProfile(); loadProgressPhotos(); }, []);
+
+  async function loadProgressPhotos() {
+    setPhotosLoading(true);
+    try {
+      const photos = await apiGetProgressPhotos();
+      if (Array.isArray(photos)) setProgressPhotos(photos as ProgressPhoto[]);
+    } catch (e) { console.error("Failed to load progress photos:", e); }
+    finally { setPhotosLoading(false); }
+  }
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -293,36 +344,117 @@ export default function ProfileScreen() {
     ]);
   }
 
+  // Resize image to max 1MB before upload
+  async function resizeAndEncodePhoto(uri: string): Promise<{ base64: string; mimeType: string }> {
+    const manipResult = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 1080 } }],
+      { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
+    return { base64: manipResult.base64 ?? "", mimeType: "image/jpeg" };
+  }
+
   async function handleAddPhoto() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow access to your photo library.");
-      return;
-    }
+    if (status !== "granted") { Alert.alert("Permission needed", "Please allow access to your photo library."); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
+      quality: 0.9,
       allowsEditing: true,
       aspect: [3, 4],
     });
     if (!result.canceled && result.assets[0]) {
-      Alert.alert("Photo Selected", "Progress photo upload coming soon!");
+      setPendingPhotoUri(result.assets[0].uri);
+      setPendingPhotoName(format(new Date(), "MMM d, yyyy"));
+      setPendingPhotoDesc("");
+      setShowPhotoNameModal(true);
     }
   }
 
   async function handleTakePhoto() {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please allow camera access.");
-      return;
-    }
+    if (status !== "granted") { Alert.alert("Permission needed", "Please allow camera access."); return; }
     const result = await ImagePicker.launchCameraAsync({
-      quality: 0.8,
+      quality: 0.9,
       allowsEditing: true,
       aspect: [3, 4],
     });
     if (!result.canceled && result.assets[0]) {
-      Alert.alert("Photo Taken", "Progress photo upload coming soon!");
+      setPendingPhotoUri(result.assets[0].uri);
+      setPendingPhotoName(format(new Date(), "MMM d, yyyy"));
+      setPendingPhotoDesc("");
+      setShowPhotoNameModal(true);
+    }
+  }
+
+  async function confirmUploadPhoto() {
+    if (!pendingPhotoUri) return;
+    setUploadingPhoto(true);
+    setShowPhotoNameModal(false);
+    try {
+      const { base64, mimeType } = await resizeAndEncodePhoto(pendingPhotoUri);
+      await apiUploadProgressPhoto({
+        photoBase64: `data:${mimeType};base64,${base64}`,
+        photoName: pendingPhotoName || format(new Date(), "MMM d, yyyy"),
+        photoDate: Date.now(),
+        description: pendingPhotoDesc || undefined,
+      });
+      await loadProgressPhotos();
+      Alert.alert("Saved!", "Progress photo uploaded.");
+    } catch (e: any) {
+      Alert.alert("Upload Error", e.message || "Failed to upload photo.");
+    } finally {
+      setUploadingPhoto(false);
+      setPendingPhotoUri(null);
+    }
+  }
+
+  async function handleDeletePhoto(photo: ProgressPhoto) {
+    Alert.alert("Delete Photo", `Delete "${photo.photoName}"?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive",
+        onPress: async () => {
+          try {
+            await apiDeleteProgressPhoto(photo.id);
+            await loadProgressPhotos();
+            setShowPhotoModal(false);
+            setSelectedPhoto(null);
+          } catch (e: any) {
+            Alert.alert("Error", e.message || "Failed to delete photo.");
+          }
+        },
+      },
+    ]);
+  }
+
+  async function handleAnalyzePhoto(photo: ProgressPhoto) {
+    if (!photo.photoBase64 && !photo.photoUrl) {
+      Alert.alert("No image data", "This photo cannot be analyzed.");
+      return;
+    }
+    setAnalyzingPhoto(true);
+    setBodyAnalysis(null);
+    try {
+      let base64 = photo.photoBase64 || "";
+      if (!base64 && photo.photoUrl) {
+        // Download from URL and convert to base64
+        const downloadResult = await FileSystem.downloadAsync(
+          photo.photoUrl,
+          FileSystem.cacheDirectory + "analysis_photo.jpg"
+        );
+        base64 = await FileSystem.readAsStringAsync(downloadResult.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      }
+      // Strip data: prefix if present
+      const cleanBase64 = base64.replace(/^data:image\/[a-z]+;base64,/, "");
+      const analysis = await apiAnalyzeBodyPhoto(cleanBase64, "image/jpeg");
+      setBodyAnalysis(analysis as BodyAnalysis);
+    } catch (e: any) {
+      Alert.alert("Analysis Error", e.message || "Failed to analyze photo. Ensure it is a clear full-body photo.");
+    } finally {
+      setAnalyzingPhoto(false);
     }
   }
 
@@ -415,18 +547,48 @@ export default function ProfileScreen() {
 
           {/* Progress Photos */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📸 Progress Photos</Text>
+            <View style={styles.photoSectionHeader}>
+              <Text style={styles.sectionTitle}>📸 Progress Photos</Text>
+              {uploadingPhoto && <ActivityIndicator size="small" color={Colors.primary} />}
+            </View>
             <View style={styles.photoActions}>
-              <TouchableOpacity style={styles.photoBtn} onPress={handleTakePhoto}>
+              <TouchableOpacity style={styles.photoBtn} onPress={handleTakePhoto} disabled={uploadingPhoto}>
                 <Text style={styles.photoBtnIcon}>📷</Text>
-                <Text style={styles.photoBtnText}>Take Photo</Text>
+                <Text style={styles.photoBtnText}>Camera</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.photoBtn} onPress={handleAddPhoto}>
+              <TouchableOpacity style={styles.photoBtn} onPress={handleAddPhoto} disabled={uploadingPhoto}>
                 <Text style={styles.photoBtnIcon}>🖼️</Text>
-                <Text style={styles.photoBtnText}>Choose Photo</Text>
+                <Text style={styles.photoBtnText}>Gallery</Text>
               </TouchableOpacity>
             </View>
-            <Text style={styles.photoHint}>Progress photos help you visually track your transformation over time.</Text>
+            {photosLoading ? (
+              <ActivityIndicator color={Colors.primary} style={{ marginTop: 12 }} />
+            ) : progressPhotos.length === 0 ? (
+              <Text style={styles.photoHint}>No progress photos yet. Take or upload your first photo to start tracking your transformation.</Text>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoGallery}>
+                {progressPhotos.map((photo) => (
+                  <TouchableOpacity
+                    key={photo.id}
+                    style={styles.photoThumb}
+                    onPress={() => { setSelectedPhoto(photo); setBodyAnalysis(null); setShowPhotoModal(true); }}
+                  >
+                    {photo.photoUrl || photo.photoBase64 ? (
+                      <Image
+                        source={{ uri: photo.photoUrl || (photo.photoBase64?.startsWith("data:") ? photo.photoBase64 : `data:image/jpeg;base64,${photo.photoBase64}`) }}
+                        style={styles.photoThumbImg}
+                      />
+                    ) : (
+                      <View style={[styles.photoThumbImg, styles.photoThumbPlaceholder]}>
+                        <Text style={{ fontSize: 28 }}>📷</Text>
+                      </View>
+                    )}
+                    <Text style={styles.photoThumbLabel} numberOfLines={1}>{photo.photoName}</Text>
+                    <Text style={styles.photoThumbDate}>{format(new Date(photo.photoDate), "MMM d")}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
 
           {/* Logout */}
@@ -435,6 +597,171 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </ScrollView>
       )}
+
+      {/* Photo Name Modal */}
+      <Modal visible={showPhotoNameModal} animationType="slide" transparent>
+        <View style={styles.photoNameOverlay}>
+          <View style={styles.photoNameSheet}>
+            <Text style={styles.photoNameTitle}>Name Your Photo</Text>
+            {pendingPhotoUri && (
+              <Image source={{ uri: pendingPhotoUri }} style={styles.photoNamePreview} />
+            )}
+            <Text style={styles.fieldLabel}>Photo Name</Text>
+            <TextInput
+              style={styles.input}
+              value={pendingPhotoName}
+              onChangeText={setPendingPhotoName}
+              placeholder={format(new Date(), "MMM d, yyyy")}
+              placeholderTextColor={Colors.textMuted}
+            />
+            <Text style={styles.fieldLabel}>Description (optional)</Text>
+            <TextInput
+              style={[styles.input, { height: 60, textAlignVertical: "top" }]}
+              value={pendingPhotoDesc}
+              onChangeText={setPendingPhotoDesc}
+              placeholder="e.g. Week 4 check-in, front view..."
+              placeholderTextColor={Colors.textMuted}
+              multiline
+            />
+            <View style={styles.photoNameBtns}>
+              <TouchableOpacity style={styles.photoNameCancel} onPress={() => { setShowPhotoNameModal(false); setPendingPhotoUri(null); }}>
+                <Text style={styles.photoNameCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.photoNameSave} onPress={confirmUploadPhoto}>
+                <Text style={styles.photoNameSaveText}>Upload Photo</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Photo Detail Modal */}
+      <Modal visible={showPhotoModal} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.photoDetailContainer}>
+          <View style={styles.photoDetailHeader}>
+            <TouchableOpacity onPress={() => { setShowPhotoModal(false); setSelectedPhoto(null); setBodyAnalysis(null); }}>
+              <Text style={styles.modalCancel}>Close</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>{selectedPhoto?.photoName ?? "Photo"}</Text>
+            <TouchableOpacity onPress={() => selectedPhoto && handleDeletePhoto(selectedPhoto)}>
+              <Text style={styles.deletePhotoBtn}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={styles.photoDetailScroll}>
+            {selectedPhoto && (selectedPhoto.photoUrl || selectedPhoto.photoBase64) && (
+              <Image
+                source={{ uri: selectedPhoto.photoUrl || (selectedPhoto.photoBase64?.startsWith("data:") ? selectedPhoto.photoBase64 : `data:image/jpeg;base64,${selectedPhoto.photoBase64}`) }}
+                style={styles.photoDetailImg}
+                resizeMode="contain"
+              />
+            )}
+            <View style={styles.photoDetailMeta}>
+              <Text style={styles.photoDetailName}>{selectedPhoto?.photoName}</Text>
+              <Text style={styles.photoDetailDate}>{selectedPhoto ? format(new Date(selectedPhoto.photoDate), "MMMM d, yyyy") : ""}</Text>
+              {selectedPhoto?.description ? <Text style={styles.photoDetailDesc}>{selectedPhoto.description}</Text> : null}
+            </View>
+
+            {/* AI Body Analysis */}
+            <TouchableOpacity
+              style={[styles.analyzeBtn, analyzingPhoto && styles.analyzeBtnDisabled]}
+              onPress={() => selectedPhoto && handleAnalyzePhoto(selectedPhoto)}
+              disabled={analyzingPhoto}
+            >
+              {analyzingPhoto ? (
+                <><ActivityIndicator color="#0f172a" /><Text style={styles.analyzeBtnText}>  Analyzing...</Text></>
+              ) : (
+                <Text style={styles.analyzeBtnText}>🤖 AI Body Analysis</Text>
+              )}
+            </TouchableOpacity>
+
+            {bodyAnalysis && (
+              <View style={styles.analysisResult}>
+                <Text style={styles.analysisTitle}>Body Composition Analysis</Text>
+
+                {/* Key Metrics */}
+                <View style={styles.analysisMetrics}>
+                  {bodyAnalysis.estimatedBodyFatPercent !== null && (
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisStatVal}>{bodyAnalysis.estimatedBodyFatPercent}%</Text>
+                      <Text style={styles.analysisStatLabel}>Body Fat</Text>
+                    </View>
+                  )}
+                  {bodyAnalysis.bmi !== null && (
+                    <View style={styles.analysisStat}>
+                      <Text style={styles.analysisStatVal}>{bodyAnalysis.bmi?.toFixed(1)}</Text>
+                      <Text style={styles.analysisStatLabel}>BMI</Text>
+                    </View>
+                  )}
+                  <View style={styles.analysisStat}>
+                    <Text style={styles.analysisStatVal}>{bodyAnalysis.estimatedMuscleMass}</Text>
+                    <Text style={styles.analysisStatLabel}>Muscle Mass</Text>
+                  </View>
+                  <View style={styles.analysisStat}>
+                    <Text style={[styles.analysisStatVal, {
+                      color: bodyAnalysis.overallHealthRating === "healthy" ? Colors.success :
+                        bodyAnalysis.overallHealthRating === "underweight" ? Colors.warning : Colors.danger
+                    }]}>{bodyAnalysis.overallHealthRating}</Text>
+                    <Text style={styles.analysisStatLabel}>Rating</Text>
+                  </View>
+                </View>
+
+                {/* Recommendation */}
+                <View style={styles.analysisRecommendation}>
+                  <Text style={styles.analysisRecTitle}>
+                    {bodyAnalysis.primaryRecommendation === "fat_loss" ? "🔥 Recommendation: Fat Loss" :
+                      bodyAnalysis.primaryRecommendation === "muscle_gain" ? "💪 Recommendation: Muscle Gain" :
+                        bodyAnalysis.primaryRecommendation === "recomposition" ? "⚖️ Recommendation: Body Recomposition" :
+                          "✅ Recommendation: Maintain"}
+                  </Text>
+                  <Text style={styles.analysisRecReason}>{bodyAnalysis.recommendationReason}</Text>
+                </View>
+
+                {/* Positive Areas */}
+                {bodyAnalysis.positiveAreas.length > 0 && (
+                  <View style={styles.analysisSection}>
+                    <Text style={styles.analysisSectionTitle}>✅ Positive Areas</Text>
+                    {bodyAnalysis.positiveAreas.map((item, i) => (
+                      <Text key={i} style={styles.analysisItem}>• {item}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {/* Areas for Improvement */}
+                {bodyAnalysis.areasForImprovement.length > 0 && (
+                  <View style={styles.analysisSection}>
+                    <Text style={styles.analysisSectionTitle}>📈 Areas for Improvement</Text>
+                    {bodyAnalysis.areasForImprovement.map((item, i) => (
+                      <Text key={i} style={styles.analysisItem}>• {item}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {/* Action Plan */}
+                {bodyAnalysis.actionPlan.length > 0 && (
+                  <View style={styles.analysisSection}>
+                    <Text style={styles.analysisSectionTitle}>🗓️ Action Plan</Text>
+                    {bodyAnalysis.actionPlan.map((item, i) => (
+                      <Text key={i} style={styles.analysisItem}>{i + 1}. {item}</Text>
+                    ))}
+                  </View>
+                )}
+
+                {/* Nutrition Tips */}
+                {bodyAnalysis.nutritionTips.length > 0 && (
+                  <View style={styles.analysisSection}>
+                    <Text style={styles.analysisSectionTitle}>🥗 Nutrition Tips</Text>
+                    {bodyAnalysis.nutritionTips.map((item, i) => (
+                      <Text key={i} style={styles.analysisItem}>• {item}</Text>
+                    ))}
+                  </View>
+                )}
+
+                <Text style={styles.analysisDisclaimer}>{bodyAnalysis.disclaimer}</Text>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal visible={showEditModal} animationType="slide" presentationStyle="pageSheet">
@@ -738,4 +1065,49 @@ const styles = StyleSheet.create({
   datePickerIcon: { fontSize: 18 },
   clearDateBtn: { marginTop: 6, alignSelf: "flex-end" },
   clearDateText: { fontSize: 12, color: Colors.textMuted, textDecorationLine: "underline" },
+  // Progress Photos
+  photoSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  photoGallery: { marginTop: 8 },
+  photoThumb: { width: 100, marginRight: 10, alignItems: "center" },
+  photoThumbImg: { width: 100, height: 130, borderRadius: 10, backgroundColor: Colors.background },
+  photoThumbPlaceholder: { justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: Colors.border },
+  photoThumbLabel: { fontSize: 11, color: Colors.textPrimary, fontWeight: "600", marginTop: 4, textAlign: "center" },
+  photoThumbDate: { fontSize: 10, color: Colors.textMuted, textAlign: "center" },
+  // Photo Name Modal
+  photoNameOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  photoNameSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 40 },
+  photoNameTitle: { fontSize: 17, fontWeight: "700", color: Colors.textPrimary, textAlign: "center", marginBottom: 16 },
+  photoNamePreview: { width: "100%", height: 180, borderRadius: 12, marginBottom: 12, resizeMode: "cover" },
+  photoNameBtns: { flexDirection: "row", gap: 12, marginTop: 16 },
+  photoNameCancel: { flex: 1, backgroundColor: Colors.background, borderRadius: 10, padding: 14, alignItems: "center", borderWidth: 1, borderColor: Colors.border },
+  photoNameCancelText: { color: Colors.textSecondary, fontSize: 15, fontWeight: "600" },
+  photoNameSave: { flex: 2, backgroundColor: Colors.primary, borderRadius: 10, padding: 14, alignItems: "center" },
+  photoNameSaveText: { color: "#0f172a", fontSize: 15, fontWeight: "700" },
+  // Photo Detail Modal
+  photoDetailContainer: { flex: 1, backgroundColor: Colors.background },
+  photoDetailHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  deletePhotoBtn: { color: Colors.danger, fontSize: 15, fontWeight: "600" },
+  photoDetailScroll: { flex: 1 },
+  photoDetailImg: { width: "100%", height: 360, backgroundColor: Colors.surface },
+  photoDetailMeta: { padding: 16 },
+  photoDetailName: { fontSize: 18, fontWeight: "700", color: Colors.textPrimary },
+  photoDetailDate: { fontSize: 13, color: Colors.textSecondary, marginTop: 4 },
+  photoDetailDesc: { fontSize: 13, color: Colors.textMuted, marginTop: 8, fontStyle: "italic" },
+  // AI Analysis
+  analyzeBtn: { marginHorizontal: 16, marginBottom: 8, backgroundColor: Colors.primary, borderRadius: 12, padding: 14, alignItems: "center", flexDirection: "row", justifyContent: "center" },
+  analyzeBtnDisabled: { opacity: 0.6 },
+  analyzeBtnText: { color: "#0f172a", fontSize: 15, fontWeight: "700" },
+  analysisResult: { margin: 16, backgroundColor: Colors.surface, borderRadius: 16, padding: 16, borderWidth: 1, borderColor: Colors.border, marginBottom: 40 },
+  analysisTitle: { fontSize: 16, fontWeight: "700", color: Colors.textPrimary, marginBottom: 14, textAlign: "center" },
+  analysisMetrics: { flexDirection: "row", justifyContent: "space-around", marginBottom: 16, backgroundColor: Colors.background, borderRadius: 12, padding: 12 },
+  analysisStat: { alignItems: "center" },
+  analysisStatVal: { fontSize: 18, fontWeight: "bold", color: Colors.primary },
+  analysisStatLabel: { fontSize: 10, color: Colors.textMuted, marginTop: 2 },
+  analysisRecommendation: { backgroundColor: "rgba(34,211,238,0.08)", borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: "rgba(34,211,238,0.2)" },
+  analysisRecTitle: { fontSize: 14, fontWeight: "700", color: Colors.primary, marginBottom: 6 },
+  analysisRecReason: { fontSize: 13, color: Colors.textSecondary, lineHeight: 18 },
+  analysisSection: { marginBottom: 12 },
+  analysisSectionTitle: { fontSize: 13, fontWeight: "700", color: Colors.textPrimary, marginBottom: 6 },
+  analysisItem: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20, marginBottom: 2 },
+  analysisDisclaimer: { fontSize: 11, color: Colors.textMuted, fontStyle: "italic", marginTop: 12, textAlign: "center", lineHeight: 16 },
 });

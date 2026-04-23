@@ -320,3 +320,71 @@ export async function apiAskAssistant(
     profileSummary,
   });
 }
+
+// ── Workout AI Features ───────────────────────────────────────────────────────
+/**
+ * Parse a text description of a workout into structured exercises.
+ * Web: trpc.workouts.parseFromText
+ */
+export async function apiParseWorkoutFromText(text: string) {
+  return trpcMutation("workouts.parseFromText", { text });
+}
+
+/**
+ * Parse a voice recording (base64 audio) of a workout into structured exercises.
+ * Web: trpc.workouts.parseFromVoice
+ */
+export async function apiParseWorkoutFromVoice(audioBase64: string, mimeType = "audio/m4a") {
+  return trpcMutation("workouts.parseFromVoice", { audioBase64, mimeType });
+}
+
+/**
+ * Get a personalized AI workout plan.
+ * Web: trpc.workouts.getAIWorkoutPlan
+ */
+export async function apiGetAIWorkoutPlanFull(opts: {
+  workoutType?: "strength" | "cardio" | "hiit" | "flexibility" | "full_body" | "upper_body" | "lower_body" | "core";
+  durationMins?: number;
+  intensity?: "light" | "moderate" | "intense";
+  customRequest?: string;
+}) {
+  return trpcMutation("workouts.getAIWorkoutPlan", opts);
+}
+
+// ── Progress Photos ───────────────────────────────────────────────────────────
+/**
+ * Get all progress photos for the current user.
+ * Web: trpc.progressPhotos.getPhotos
+ */
+export async function apiGetProgressPhotos() {
+  return trpcQuery("progressPhotos.getPhotos");
+}
+
+/**
+ * Upload a progress photo (base64 encoded).
+ * Web: trpc.progressPhotos.uploadPhoto
+ */
+export async function apiUploadProgressPhoto(data: {
+  photoBase64: string;
+  photoName: string;
+  photoDate: number;
+  description?: string;
+}) {
+  return trpcMutation("progressPhotos.uploadPhoto", data);
+}
+
+/**
+ * Delete a progress photo.
+ * Web: trpc.progressPhotos.deletePhoto
+ */
+export async function apiDeleteProgressPhoto(photoId: number) {
+  return trpcMutation("progressPhotos.deletePhoto", { photoId });
+}
+
+/**
+ * Analyze a body photo with Gemini AI for body composition insights.
+ * Web: trpc.progressPhotos.analyzeBodyPhoto
+ */
+export async function apiAnalyzeBodyPhoto(photoBase64: string, mimeType = "image/jpeg") {
+  return trpcMutation("progressPhotos.analyzeBodyPhoto", { photoBase64, mimeType });
+}
